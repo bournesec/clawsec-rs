@@ -119,6 +119,7 @@ let pagedThreats = $derived(threats.slice((currentPage - 1) * PAGE_SIZE, current
 | `threat_type` | `"EXFIL"` / `"INJECTION"` / `"SSH_CONNECT"` |
 | `pattern` | 检测标签（`ai_api_key`, `pipe_to_shell`, `ssh_key_file` 等），见 `scanner/patterns.rs` |
 | `snippet` | 匹配文本片段（前后各 50 字符上下文，最长 200 字符） |
+| `raw_payload` | 完整扫描文本（请求行+请求头+请求体，最长 `max_scan_bytes`，默认 65536），详情弹窗展示此字段 |
 | `source` | 来源地址 |
 | `dest` | 目标地址 |
 | `timestamp` | RFC 3339 时间戳 |
@@ -131,6 +132,25 @@ let pagedThreats = $derived(threats.slice((currentPage - 1) * PAGE_SIZE, current
 | high | 高危 | `ssh_connect`, `pipe_to_shell`, `unix_sensitive` |
 | medium | 中危 | `ssh_key_file`, `dotenv_file`, `ssh_pubkey` |
 | low | 低危 | 其他 |
+
+## Payload 高亮
+
+`frontend/src/lib/highlight.ts` 提供攻击载荷高亮工具函数：
+
+- `escapeHtml(s)` — HTML 转义，防止 XSS
+- `highlightPayload(snippet, pattern)` — 根据 pattern 选择正则表达式，仅对匹配到的攻击片段包裹 `<mark>` 标签（红底高亮），其余文本保持原样
+- `PAYLOAD_RE` 字典 — 12 个 JS 正则，**需与后端 `clawsec-core/src/scanner/patterns.rs` 保持同步**
+
+在 Svelte 中使用 `{@html highlightPayload(text, pattern)}` 渲染。两个组件（Threats、LiveMonitor）的列表预览和详情弹窗均使用此函数。
+
+## 详情弹窗
+
+Threats 和 LiveMonitor 每条记录有「详情」按钮，点击弹出模态窗口：
+
+- 状态：`let selectedThreat = $state<Record<string, unknown> | null>(null);`
+- 弹窗结构：固定定位 overlay（点击关闭） + 居中卡片（`width: min(720px, 90vw)`，`max-height: 85vh` 滚动）
+- 展示全部字段（时间、类型、等级、协议、方向、来源、目标、威胁类型）+ 完整 `raw_payload`（红底高亮攻击片段）
+- `fullPayload()` 函数优先读 `raw_payload`，回退到 `snippet`（兼容旧威胁数据）
 
 ## 前端布局约束（重要）
 
