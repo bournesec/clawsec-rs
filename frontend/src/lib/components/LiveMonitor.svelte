@@ -3,19 +3,24 @@
   import { onMount } from "svelte";
 
   let threats = $state<Record<string, unknown>[]>([]);
-  let visibleThreats = $state<Record<string, unknown>[]>([]);
   let loading = $state(true);
   let error = $state("");
   let polling = $state(true);
   let paused = $state(false);
   let newCount = $state(0);
   let latestTimestamp = $state(0);
+  let currentPage = $state(1);
 
-  const MAX_VISIBLE = 200;
+  const PAGE_SIZE = 10;
+
+  let totalPages = $derived(Math.max(1, Math.ceil(threats.length / PAGE_SIZE)));
+  let pagedThreats = $derived(
+    [...threats].reverse().slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+  );
 
   async function refresh() {
     try {
-      const fresh = (await invoke("get_threats", { limit: 50 })) as Record<string, unknown>[];
+      const fresh = (await invoke("get_threats", { limit: 500 })) as Record<string, unknown>[];
       error = "";
 
       if (threats.length > 0 && fresh.length > threats.length) {
@@ -29,8 +34,8 @@
 
       threats = fresh;
 
-      if (!paused) {
-        visibleThreats = [...threats].reverse().slice(0, MAX_VISIBLE);
+      if (!paused && newCount > 0) {
+        currentPage = 1;
         newCount = 0;
       }
     } catch (e) {
@@ -43,19 +48,46 @@
   function togglePause() {
     paused = !paused;
     if (!paused) {
-      visibleThreats = [...threats].reverse().slice(0, MAX_VISIBLE);
+      currentPage = 1;
       newCount = 0;
     }
   }
 
   function clearFeed() {
-    visibleThreats = [];
     threats = [];
     newCount = 0;
+    currentPage = 1;
+  }
+
+  function goToPage(page: number) {
+    if (page >= 1 && page <= totalPages) currentPage = page;
+  }
+
+  function deriveSeverity(t: Record<string, unknown>): string {
+    // Use explicit severity if present
+    const explicit = String(t.severity ?? "").toLowerCase();
+    if (["critical", "high", "medium", "low"].includes(explicit)) return explicit;
+
+    const pattern = String(t.pattern ?? "").toLowerCase();
+    const threatType = String(t.threat_type ?? t.type ?? "").toLowerCase();
+
+    // Critical: API keys, private keys, destructive commands
+    if (["ai_api_key", "private_key_pem", "aws_access_key"].includes(pattern)) return "critical";
+    if (["reverse_shell", "destructive_rm", "shell_exec", "ssh_key_inject"].includes(pattern)) return "critical";
+
+    // High: SSH connect, pipe to shell, sensitive files
+    if (threatType === "ssh_connect") return "high";
+    if (["pipe_to_shell", "unix_sensitive"].includes(pattern)) return "high";
+
+    // Medium: file access patterns
+    if (["ssh_key_file", "dotenv_file", "ssh_pubkey"].includes(pattern)) return "medium";
+
+    return "low";
   }
 
   function severityLine(s: unknown): string {
-    switch ((String(s ?? "")).toLowerCase()) {
+    const sev = String(s ?? "").toLowerCase();
+    switch (sev) {
       case "critical": return "line-critical";
       case "high":     return "line-high";
       case "medium":   return "line-medium";
@@ -65,12 +97,22 @@
   }
 
   function severityDotColor(s: unknown): string {
-    switch ((String(s ?? "")).toLowerCase()) {
+    switch (String(s ?? "").toLowerCase()) {
       case "critical": return "var(--color-danger)";
       case "high":     return "var(--color-warning)";
       case "medium":   return "oklch(72% 0.15 85)";
       case "low":      return "var(--color-text-muted)";
       default:         return "var(--color-text-tertiary)";
+    }
+  }
+
+  function severityLabel(sev: string): string {
+    switch (sev) {
+      case "critical": return "严重";
+      case "high":     return "高危";
+      case "medium":   return "中危";
+      case "low":      return "低危";
+      default:         return "信息";
     }
   }
 
@@ -82,15 +124,30 @@
   }
 
   function typeLabel(t: Record<string, unknown>): string {
-    return String(t.type ?? t.threat_type ?? t.kind ?? "detection");
+    const pattern = String(t.pattern ?? "");
+    if (pattern) return pattern;
+    return String(t.threat_type ?? t.type ?? t.kind ?? "detection");
   }
 
   function sourceLabel(t: Record<string, unknown>): string {
     return String(t.source ?? t.src ?? t.host ?? t.ip ?? "");
   }
 
+  function destLabel(t: Record<string, unknown>): string {
+    return String(t.dest ?? t.destination ?? "");
+  }
+
+  function protoLabel(t: Record<string, unknown>): string {
+    return String(t.protocol ?? "").toUpperCase();
+  }
+
+  function directionLabel(t: Record<string, unknown>): string {
+    const d = String(t.direction ?? "");
+    return d === "outbound" ? "出站" : d === "inbound" ? "入站" : d;
+  }
+
   function detailText(t: Record<string, unknown>): string {
-    return String(t.details ?? t.description ?? t.message ?? JSON.stringify(t));
+    return String(t.snippet ?? t.details ?? t.description ?? t.message ?? "");
   }
 
   onMount(() => {
@@ -99,10 +156,8 @@
   });
 </script>
 
-<!-- min-width:0 + overflow:hidden 确保子元素不会撑开容器宽度 -->
 <div style="width: 100%; min-width: 0; overflow-x: hidden;">
-  <!-- Header -->
-  <div class="monitor-header" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 8px;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 8px;">
     <div style="min-width: 0;">
       <h2 style="font-size: 18px; font-weight: 600; color: var(--color-text); margin: 0;">实时监控</h2>
       <p style="font-size: 13px; color: var(--color-text-tertiary); margin: 4px 0 0;">实时威胁检测流</p>
@@ -132,51 +187,88 @@
       <p style="color: var(--color-text-tertiary); font-size: 13px; margin: 0;">正在加载威胁流...</p>
     </div>
 
-  {:else if visibleThreats.length === 0}
+  {:else if threats.length === 0}
     <div class="card" style="padding: 48px 32px; text-align: center;">
       <p style="color: var(--color-text-tertiary); font-size: 13px; margin: 0;">暂未检测到威胁。</p>
       <p style="color: var(--color-text-muted); font-size: 12px; margin: 8px 0 0;">启动监控并生成流量以查看实时检测。</p>
     </div>
 
   {:else}
-    <!-- Threat feed — min-width:0 防止内容撑开 -->
-    <div style="display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0;">
-      {#each visibleThreats as t}
-        <div class="card {severityLine(t.severity)}" style="width: 100%; box-sizing: border-box; min-width: 0; overflow: hidden; padding: 12px 16px; border-left-width: 3px;">
-          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0; overflow: hidden;">
-            <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 0%;">
-              <span style="width: 8px; height: 8px; border-radius: 50%; background: {severityDotColor(t.severity)}; flex-shrink: 0;"></span>
-              <span style="font-size: 13px; font-weight: 500; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;">{typeLabel(t)}</span>
-              {#if sourceLabel(t)}
-                <span style="font-size: 12px; color: var(--color-text-tertiary); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;">{sourceLabel(t)}</span>
-              {/if}
+    <!-- Threat feed — 外层 card 确保宽度约束，与威胁列表保持一致 -->
+    <div class="card" style="overflow: hidden; width: 100%; min-width: 0;">
+      <div style="width: 100%; min-width: 0;">
+        {#each pagedThreats as t}
+          {@const sev = deriveSeverity(t)}
+          <div class="{severityLine(sev)}" style="width: 100%; box-sizing: border-box; min-width: 0; overflow: hidden; padding: 12px 16px; border: 1px solid var(--color-border-light); border-left-width: 3px; border-radius: var(--radius-md); background: var(--color-bg); margin-bottom: 8px;">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0;">
+              <div style="display: flex; align-items: flex-start; gap: 8px; min-width: 0; flex: 1 1 0%;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: {severityDotColor(sev)}; flex-shrink: 0; margin-top: 4px;"></span>
+                <div style="min-width: 0; flex: 1 1 0%;">
+                  <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                    <span style="font-size: 13px; font-weight: 500; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;">{typeLabel(t)}</span>
+                    <span style="font-size: 11px; color: var(--color-accent); font-family: var(--font-mono); white-space: nowrap; flex-shrink: 0;">{protoLabel(t)}</span>
+                    <span style="font-size: 11px; color: var(--color-text-muted); white-space: nowrap; flex-shrink: 0;">{directionLabel(t)}</span>
+                  </div>
+                  <div style="display: flex; gap: 8px; margin-top: 2px; min-width: 0;">
+                    {#if sourceLabel(t)}
+                      <span style="font-size: 12px; color: var(--color-text-tertiary); font-family: var(--font-mono); word-break: break-all;">{sourceLabel(t)}</span>
+                    {/if}
+                    {#if destLabel(t)}
+                      <span style="font-size: 12px; color: var(--color-text-muted); font-family: var(--font-mono); white-space: nowrap;">→ {destLabel(t)}</span>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                <span class="badge {severityLine(sev).replace('line-', 'badge-')}">
+                  {severityLabel(sev)}
+                </span>
+                <span style="font-size: 11px; color: var(--color-text-muted); font-family: var(--font-mono); white-space: nowrap;">{formatTime(t.timestamp)}</span>
+              </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-              <span class="badge {severityLine(t.severity).replace('line-', 'badge-')}" style="text-transform: capitalize;">
-                {String(t.severity ?? "info")}
-              </span>
-              <span style="font-size: 11px; color: var(--color-text-muted); font-family: var(--font-mono); white-space: nowrap;">{formatTime(t.timestamp)}</span>
-            </div>
+            {#if detailText(t)}
+              <p style="font-size: 12px; color: var(--color-text-tertiary); margin: 8px 0 0 16px; word-break: break-all; white-space: pre-wrap; line-height: 1.5; max-height: 120px; overflow-y: auto;">{detailText(t)}</p>
+            {/if}
           </div>
-          <p style="font-size: 12px; color: var(--color-text-tertiary); margin: 8px 0 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{detailText(t)}</p>
-        </div>
-      {/each}
+        {/each}
+      </div>
     </div>
 
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px;">
-      <span style="font-size: 11px; color: var(--color-text-muted);">显示 {visibleThreats.length} 条威胁</span>
+    <!-- Pagination + Status -->
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 8px; flex-wrap: wrap;">
+      <span style="font-size: 11px; color: var(--color-text-muted);">共 {threats.length} 条威胁</span>
+
+      <div style="display: flex; align-items: center; gap: 4px;">
+        <button
+          class="btn-secondary"
+          style="padding: 4px 10px; font-size: 12px;"
+          disabled={currentPage <= 1}
+          onclick={() => goToPage(1)}
+        >首页</button>
+        <button
+          class="btn-secondary"
+          style="padding: 4px 10px; font-size: 12px;"
+          disabled={currentPage <= 1}
+          onclick={() => goToPage(currentPage - 1)}
+        >上一页</button>
+        <span style="font-size: 12px; color: var(--color-text-tertiary); padding: 0 8px; white-space: nowrap;">
+          第 {currentPage} / {totalPages} 页
+        </span>
+        <button
+          class="btn-secondary"
+          style="padding: 4px 10px; font-size: 12px;"
+          disabled={currentPage >= totalPages}
+          onclick={() => goToPage(currentPage + 1)}
+        >下一页</button>
+        <button
+          class="btn-secondary"
+          style="padding: 4px 10px; font-size: 12px;"
+          disabled={currentPage >= totalPages}
+          onclick={() => goToPage(totalPages)}
+        >末页</button>
+      </div>
+
       <span style="font-size: 11px; color: var(--color-text-muted);">{paused ? "已暂停" : "每 2 秒自动刷新"}</span>
     </div>
   {/if}
 </div>
-
-<style>
-  /* ── Responsive: stack header at narrow widths ── */
-  @media (max-width: 899px) {
-    .monitor-header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-    }
-  }
-</style>

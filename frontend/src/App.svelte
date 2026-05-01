@@ -22,7 +22,7 @@
   });
 </script>
 
-<div class="flex h-screen">
+<div class="flex h-screen" style="width: -webkit-fill-available;">
   <Sidebar current={currentPage} onNavigate={(page: string) => (currentPage = page)} />
   <main class="flex-1 overflow-y-auto bg-surface" style="padding: clamp(12px, 2vw, 24px); min-width: 0; overflow-x: hidden;">
     {#if currentPage === "dashboard"}

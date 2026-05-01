@@ -67,6 +67,15 @@ Cargo workspace (根 Cargo.toml)
 
 每个页面组件通过 `invoke("command_name", { args })` 调用 Tauri command，都实现了 loading / error / empty 三种状态处理。
 
+**分页模式**：Threats 和 LiveMonitor 都使用 Svelte 5 `$derived` rune 做客户端分页：
+```ts
+const PAGE_SIZE = 10;
+let currentPage = $state(1);
+let totalPages = $derived(Math.max(1, Math.ceil(threats.length / PAGE_SIZE)));
+let pagedThreats = $derived(threats.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE));
+```
+分页控件：首页 / 上一页 / 第 X/Y 页 / 下一页 / 末页，边界自动禁用。
+
 **UI 语言：全部使用汉语，专业术语（HTTP、SSH、MITM、PID 等）除外。** 侧边栏导航：仪表盘 / 实时监控 / 威胁列表 / 设置。
 
 ## Tauri Commands（src-tauri/src/lib.rs）
@@ -76,7 +85,7 @@ Cargo workspace (根 Cargo.toml)
 | `get_status` | 运行状态、PID、威胁总数 |
 | `start_monitor` | 启动 Monitor（初始化 CA + 代理 + SSH 监控） |
 | `stop_monitor` | 停止 Monitor |
-| `get_threats` | 获取威胁列表（limit 参数，默认 50） |
+| `get_threats` | 获取威胁列表（limit 参数，前端翻页用 `limit: 500` 全量拉取后客户端分页，每页 10 条） |
 | `get_recent_threats` | 增量威胁（since_count）用于实时更新 |
 | `get_config` | 读取配置 |
 | `save_config` | 保存配置 |
@@ -99,16 +108,43 @@ Cargo workspace (根 Cargo.toml)
 
 所有颜色使用 CSS 自定义属性（OKLCH 色彩空间），定义在 `app.css` 中，分 `[data-theme="dark"]`（默认）和 `[data-theme="light"]` 两组。
 
+## 威胁数据模型
+
+前端从 `get_threats` 获取的 JSON 对象对应 `clawsec-core/src/threat/mod.rs` 的 `Threat` 结构体：
+
+| 字段 | 说明 |
+|------|------|
+| `direction` | `"outbound"` / `"inbound"` |
+| `protocol` | `"http"` / `"ssh"` |
+| `threat_type` | `"EXFIL"` / `"INJECTION"` / `"SSH_CONNECT"` |
+| `pattern` | 检测标签（`ai_api_key`, `pipe_to_shell`, `ssh_key_file` 等），见 `scanner/patterns.rs` |
+| `snippet` | 匹配文本片段（前后各 50 字符上下文，最长 200 字符） |
+| `source` | 来源地址 |
+| `dest` | 目标地址 |
+| `timestamp` | RFC 3339 时间戳 |
+
+**注意：`Threat` 没有 `severity` 字段。** 等级由前端根据 `pattern` + `threat_type` 推导：
+
+| 等级 | 中文 | 匹配条件 |
+|------|------|----------|
+| critical | 严重 | `ai_api_key`, `private_key_pem`, `aws_access_key`, `reverse_shell`, `destructive_rm`, `shell_exec`, `ssh_key_inject` |
+| high | 高危 | `ssh_connect`, `pipe_to_shell`, `unix_sensitive` |
+| medium | 中危 | `ssh_key_file`, `dotenv_file`, `ssh_pubkey` |
+| low | 低危 | 其他 |
+
 ## 前端布局约束（重要）
 
-项目已全面使用流体响应式布局，修改时需遵守以下规则：
+项目已全面使用流体响应式布局，Tauri WebKit webview 的渲染行为与标准浏览器有差异，修改时需遵守以下规则：
 
 1. **每个页面组件的根 `<div>` 必须设置 `min-width: 0; overflow-x: hidden;`** — 否则 `white-space: nowrap` 的子元素会撑开容器导致横向滚动条
 2. 每层 flex 子元素需要 `min-width: 0` 才能正确收缩
-3. 卡片网格使用 `display: flex; flex-wrap: wrap;` + `flex: 1 1 Npx` 做自适应横排（CSS grid `auto-fit`/`auto-fill` 在 Tauri WebKit webview 中不可靠，已弃用）
-4. 内边距使用 `clamp(12px, 2vw, 24px)` 做连续缩放
-5. 侧边栏用 `@media (max-width: 899px)` 收缩为图标模式（56px），带 `transition: width` 动画
-6. **不要使用 `flex-basis: auto`**，改用 `flex: 1 1 0%` — `auto` 以内容宽度为基准会撑开容器
+3. **表格必须使用 `table-layout: fixed`** — `auto` 会导致列宽按内容计算，长文本撑破容器
+4. **flex 容器内的子卡片必须显式设置 `width: 100%`** — WebKit 中 `align-items: stretch`（默认值）在某些嵌套 flex 场景下不可靠
+5. **App.svelte 外层 `<div class="flex h-screen">` 需要 `width: -webkit-fill-available;`** — 否则 WebKit 可能无法正确计算可用宽度
+6. 卡片网格使用 `display: flex; flex-wrap: wrap;` + `flex: 1 1 Npx` 做自适应横排（CSS grid 在 Tauri WebKit 中不可靠，已弃用）
+7. 内边距使用 `clamp(12px, 2vw, 24px)` 做连续缩放
+8. 侧边栏用 `@media (max-width: 899px)` 收缩为图标模式（56px），带 `transition: width` 动画
+9. **不要使用 `flex-basis: auto`**，改用 `flex: 1 1 0%` — `auto` 以内容宽度为基准会撑开容器
 
 ## CLI 命令
 
