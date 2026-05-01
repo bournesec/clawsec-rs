@@ -23,6 +23,8 @@ pub struct Threat {
     pub threat_type: ThreatType,
     pub pattern: String,
     pub snippet: String,
+    /// Full request/response text that was scanned (up to max_scan bytes).
+    pub raw_payload: String,
     pub source: String,
     pub dest: String,
     pub timestamp: String,
@@ -35,6 +37,7 @@ impl Threat {
         threat_type: ThreatType,
         pattern: &str,
         snippet: &str,
+        raw_payload: &str,
         source: &str,
         dest: &str,
     ) -> Self {
@@ -50,6 +53,7 @@ impl Threat {
             threat_type,
             pattern: pattern.to_string(),
             snippet,
+            raw_payload: raw_payload.to_string(),
             source: source.to_string(),
             dest: dest.to_string(),
             timestamp: Utc::now().to_rfc3339(),
@@ -111,6 +115,7 @@ mod tests {
             ThreatType::Exfil,
             "ai_api_key",
             "sk-ant-test",
+            "sk-ant-test full payload",
             "src",
             "dest.com",
         );
@@ -133,6 +138,7 @@ mod tests {
             ThreatType::Exfil,
             "ai_api_key",
             "sk-ant-test",
+            "sk-ant-test",
             "src",
             "dest.com",
         );
@@ -141,6 +147,7 @@ mod tests {
             "http",
             ThreatType::Exfil,
             "ssh_pubkey",
+            "ssh-rsa AAAAB",
             "ssh-rsa AAAAB",
             "src",
             "dest.com",
@@ -161,6 +168,7 @@ mod tests {
             ThreatType::Exfil,
             "ai_api_key",
             "sk-ant-test",
+            "sk-ant-test",
             "src",
             "dest1.com",
         );
@@ -169,6 +177,7 @@ mod tests {
             "http",
             ThreatType::Exfil,
             "ai_api_key",
+            "sk-ant-test",
             "sk-ant-test",
             "src",
             "dest2.com",
@@ -188,6 +197,7 @@ mod tests {
             "http",
             ThreatType::Exfil,
             "ai_api_key",
+            "sk-ant-test",
             "sk-ant-test",
             "src",
             "dest.com",

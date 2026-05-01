@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { highlightPayload } from "../highlight";
 
   let threats = $state<Record<string, unknown>[]>([]);
   let loading = $state(true);
@@ -10,6 +11,7 @@
   let newCount = $state(0);
   let latestTimestamp = $state(0);
   let currentPage = $state(1);
+  let selectedThreat = $state<Record<string, unknown> | null>(null);
 
   const PAGE_SIZE = 10;
 
@@ -150,6 +152,10 @@
     return String(t.snippet ?? t.details ?? t.description ?? t.message ?? "");
   }
 
+  function fullPayload(t: Record<string, unknown>): string {
+    return String(t.raw_payload ?? t.snippet ?? t.details ?? t.message ?? "");
+  }
+
   onMount(() => {
     refresh();
     return () => { polling = false; };
@@ -199,7 +205,7 @@
       <div style="width: 100%; min-width: 0;">
         {#each pagedThreats as t}
           {@const sev = deriveSeverity(t)}
-          <div class="{severityLine(sev)}" style="width: 100%; box-sizing: border-box; min-width: 0; overflow: hidden; padding: 12px 16px; border: 1px solid var(--color-border-light); border-left-width: 3px; border-radius: var(--radius-md); background: var(--color-bg); margin-bottom: 8px;">
+          <div class="{severityLine(sev)}" style="width: 100%; box-sizing: border-box; min-width: 0; overflow: hidden; padding: 12px 16px; border: 1px solid var(--color-border-light); border-left-width: 3px; border-radius: var(--radius-md); margin-bottom: 8px;">
             <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-width: 0;">
               <div style="display: flex; align-items: flex-start; gap: 8px; min-width: 0; flex: 1 1 0%;">
                 <span style="width: 8px; height: 8px; border-radius: 50%; background: {severityDotColor(sev)}; flex-shrink: 0; margin-top: 4px;"></span>
@@ -224,10 +230,15 @@
                   {severityLabel(sev)}
                 </span>
                 <span style="font-size: 11px; color: var(--color-text-muted); font-family: var(--font-mono); white-space: nowrap;">{formatTime(t.timestamp)}</span>
+                <button
+                  class="btn-secondary"
+                  style="padding: 2px 8px; font-size: 11px;"
+                  onclick={() => { selectedThreat = t; }}
+                >详情</button>
               </div>
             </div>
             {#if detailText(t)}
-              <p style="font-size: 12px; color: var(--color-text-tertiary); margin: 8px 0 0 16px; word-break: break-all; white-space: pre-wrap; line-height: 1.5; max-height: 120px; overflow-y: auto;">{detailText(t)}</p>
+              <pre style="font-size: 12px; color: var(--color-text-tertiary); margin: 8px 0 0 16px; word-break: break-all; white-space: pre-wrap; line-height: 1.5; max-height: 120px; overflow-y: auto; background: var(--color-bg); border-radius: var(--radius-sm); padding: 8px 12px; font-family: var(--font-mono); border: 1px solid var(--color-border-light);">{@html highlightPayload(detailText(t), String(t.pattern ?? ""))}</pre>
             {/if}
           </div>
         {/each}
@@ -272,3 +283,65 @@
     </div>
   {/if}
 </div>
+
+<!-- Detail Modal -->
+{#if selectedThreat}
+  {@const sev = deriveSeverity(selectedThreat)}
+  {@const pat = String(selectedThreat.pattern ?? "")}
+  {@const detail = fullPayload(selectedThreat)}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="modal-backdrop"
+    style="position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.5);"
+    onclick={() => { selectedThreat = null; }}
+  >
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="card modal-content"
+      style="width: min(720px, 90vw); max-height: 85vh; overflow-y: auto; padding: 24px; position: relative;"
+      onclick={(e) => { e.stopPropagation(); }}
+    >
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+        <h3 style="font-size: 16px; font-weight: 600; color: var(--color-text); margin: 0;">威胁详情</h3>
+        <button
+          class="btn-secondary"
+          style="padding: 4px 12px; font-size: 12px;"
+          onclick={() => { selectedThreat = null; }}
+        >关闭</button>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 80px 1fr; gap: 10px 16px; font-size: 13px; margin-bottom: 20px;">
+        <span style="color: var(--color-text-muted);">时间</span>
+        <span style="color: var(--color-text); font-family: var(--font-mono); font-size: 12px;">{new Date(String(selectedThreat.timestamp ?? "")).toLocaleString()}</span>
+
+        <span style="color: var(--color-text-muted);">类型</span>
+        <span style="color: var(--color-text);">{typeLabel(selectedThreat)}</span>
+
+        <span style="color: var(--color-text-muted);">等级</span>
+        <span class="badge {severityLine(sev).replace('line-', 'badge-')}">{severityLabel(sev)}</span>
+
+        <span style="color: var(--color-text-muted);">协议</span>
+        <span style="color: var(--color-text);">{protoLabel(selectedThreat)}</span>
+
+        <span style="color: var(--color-text-muted);">方向</span>
+        <span style="color: var(--color-text);">{directionLabel(selectedThreat)}</span>
+
+        <span style="color: var(--color-text-muted);">来源</span>
+        <span style="color: var(--color-text); font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{sourceLabel(selectedThreat) || "\u2014"}</span>
+
+        <span style="color: var(--color-text-muted);">目标</span>
+        <span style="color: var(--color-text); font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{destLabel(selectedThreat) || "\u2014"}</span>
+
+        <span style="color: var(--color-text-muted);">威胁类型</span>
+        <span style="color: var(--color-text);">{String(selectedThreat.threat_type ?? "\u2014")}</span>
+      </div>
+
+      <div style="margin-bottom: 8px;">
+        <span style="font-size: 12px; font-weight: 500; color: var(--color-text-muted);">攻击载荷</span>
+      </div>
+      <pre style="margin: 0; word-break: break-all; overflow-wrap: break-word; white-space: pre-wrap; line-height: 1.6; font-size: 13px; color: var(--color-text); background: var(--color-bg); border-radius: var(--radius-md); padding: 16px; font-family: var(--font-mono); border: 1px solid var(--color-border); max-height: 400px; overflow-y: auto;">{@html highlightPayload(detail, pat)}</pre>
+    </div>
+  </div>
+{/if}

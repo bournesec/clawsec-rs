@@ -51,6 +51,7 @@ impl SshWatcher {
                                         ThreatType::SshConnect,
                                         "established_connection",
                                         conn,
+                                        conn,
                                         "",
                                         "",
                                     );

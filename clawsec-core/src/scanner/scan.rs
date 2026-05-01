@@ -49,6 +49,7 @@ pub fn scan(
                 ThreatType::Exfil,
                 p.label,
                 snippet,
+                truncated,
                 source,
                 dest,
             ));
@@ -67,6 +68,7 @@ pub fn scan(
                 ThreatType::Injection,
                 p.label,
                 snippet,
+                truncated,
                 source,
                 dest,
             ));
