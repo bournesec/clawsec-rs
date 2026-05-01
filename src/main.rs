@@ -96,3 +96,76 @@ fn cmd_threats(limit: usize) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn cli_start_defaults() {
+        let cli = Cli::try_parse_from(["clawsec", "start"]).unwrap();
+        match cli.command {
+            Commands::Start { config, no_mitm } => {
+                assert!(config.is_none());
+                assert!(!no_mitm);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn cli_start_with_config() {
+        let cli =
+            Cli::try_parse_from(["clawsec", "start", "--config", "/tmp/test.json"]).unwrap();
+        match cli.command {
+            Commands::Start { config, no_mitm } => {
+                assert_eq!(config.unwrap(), std::path::PathBuf::from("/tmp/test.json"));
+                assert!(!no_mitm);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn cli_start_no_mitm() {
+        let cli = Cli::try_parse_from(["clawsec", "start", "--no-mitm"]).unwrap();
+        match cli.command {
+            Commands::Start { config, no_mitm } => {
+                assert!(config.is_none());
+                assert!(no_mitm);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn cli_stop() {
+        let cli = Cli::try_parse_from(["clawsec", "stop"]).unwrap();
+        assert!(matches!(cli.command, Commands::Stop));
+    }
+
+    #[test]
+    fn cli_status() {
+        let cli = Cli::try_parse_from(["clawsec", "status"]).unwrap();
+        assert!(matches!(cli.command, Commands::Status));
+    }
+
+    #[test]
+    fn cli_threats_default_limit() {
+        let cli = Cli::try_parse_from(["clawsec", "threats"]).unwrap();
+        match cli.command {
+            Commands::Threats { limit } => assert_eq!(limit, 10),
+            _ => panic!("expected Threats"),
+        }
+    }
+
+    #[test]
+    fn cli_threats_custom_limit() {
+        let cli = Cli::try_parse_from(["clawsec", "threats", "--limit", "50"]).unwrap();
+        match cli.command {
+            Commands::Threats { limit } => assert_eq!(limit, 50),
+            _ => panic!("expected Threats"),
+        }
+    }
+}

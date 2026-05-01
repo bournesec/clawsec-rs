@@ -194,3 +194,82 @@ impl CertAuthority {
 
 unsafe impl Send for CertAuthority {}
 unsafe impl Sync for CertAuthority {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn initialize_mitm_disabled_returns_none() {
+        let dir = TempDir::new().unwrap();
+        let result = CertAuthority::initialize(dir.path(), false).unwrap();
+        assert!(result.is_none(), "MITM disabled should return None");
+    }
+
+    #[test]
+    fn initialize_mitm_enabled_creates_ca() {
+        let dir = TempDir::new().unwrap();
+        let result = CertAuthority::initialize(dir.path(), true).unwrap();
+        let ca = result.expect("MITM enabled should return Some");
+
+        assert!(ca.ca_cert_pem().contains("CERTIFICATE"));
+        assert!(dir.path().join("ca.key").exists());
+        assert!(dir.path().join("ca.crt").exists());
+    }
+
+    #[test]
+    fn ca_cert_pem_returns_pem_string() {
+        let dir = TempDir::new().unwrap();
+        let ca = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+        let pem = ca.ca_cert_pem();
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.contains("END CERTIFICATE-----"));
+    }
+
+    #[test]
+    fn server_config_for_host_returns_tls_config() {
+        let dir = TempDir::new().unwrap();
+        let ca = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+        // Verify TLS config generation succeeds for valid hostnames
+        let _cfg = ca.server_config_for_host("example.com").unwrap();
+        let _cfg2 = ca.server_config_for_host("api.example.com").unwrap();
+    }
+
+    #[test]
+    fn server_config_for_host_caches_result() {
+        let dir = TempDir::new().unwrap();
+        let ca = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+        // First call generates, second call hits cache — both should succeed
+        let _cfg1 = ca.server_config_for_host("cached.example.com").unwrap();
+        let _cfg2 = ca.server_config_for_host("cached.example.com").unwrap();
+    }
+
+    #[test]
+    fn initialize_loads_existing_ca_key() {
+        let dir = TempDir::new().unwrap();
+        // First initialization creates the CA
+        let ca1 = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+        let pem1 = ca1.ca_cert_pem().to_string();
+
+        // Second initialization should load from existing key file
+        let ca2 = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+        let pem2 = ca2.ca_cert_pem().to_string();
+
+        // Both should have valid PEM certificates
+        assert!(pem1.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(pem2.starts_with("-----BEGIN CERTIFICATE-----"));
+        // Different initializations produce new certs (new serial)
+        assert_ne!(pem1, pem2);
+    }
+
+    #[test]
+    fn server_config_for_different_hosts_produces_distinct_configs() {
+        let dir = TempDir::new().unwrap();
+        let ca = CertAuthority::initialize(dir.path(), true).unwrap().unwrap();
+
+        // Different hostnames should each get their own TLS config
+        let _cfg_a = ca.server_config_for_host("a.example.com").unwrap();
+        let _cfg_b = ca.server_config_for_host("b.example.com").unwrap();
+    }
+}

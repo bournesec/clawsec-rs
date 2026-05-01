@@ -159,3 +159,24 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_file_path_returns_path_in_log_dir() {
+        let path = config_file_path();
+        assert!(path.ends_with("config.json"));
+        assert!(path.to_string_lossy().contains("clawsec"));
+    }
+
+    #[test]
+    fn app_state_default_has_no_monitor() {
+        let state = AppState {
+            monitor: Arc::new(Mutex::new(None)),
+        };
+        let guard = state.monitor.try_lock().unwrap();
+        assert!(guard.is_none());
+    }
+}

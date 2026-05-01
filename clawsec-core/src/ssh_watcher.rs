@@ -101,3 +101,50 @@ impl SshWatcher {
         Ok(conns)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threat::log::ThreatLog;
+    use tempfile::TempDir;
+    use tokio::sync::watch;
+
+    #[test]
+    fn new_initializes_fields() {
+        let dir = TempDir::new().unwrap();
+        let log = Arc::new(ThreatLog::new(dir.path()));
+        let dedup = Arc::new(tokio::sync::Mutex::new(Dedup::new(60.0)));
+        let (_tx, rx) = watch::channel(false);
+
+        let watcher = SshWatcher::new(5, log.clone(), dedup.clone(), rx);
+
+        assert_eq!(watcher.poll_interval, 5);
+        assert!(watcher.seen.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_exits_on_shutdown_signal() {
+        let dir = TempDir::new().unwrap();
+        let log = Arc::new(ThreatLog::new(dir.path()));
+        let dedup = Arc::new(tokio::sync::Mutex::new(Dedup::new(60.0)));
+        let (tx, rx) = watch::channel(false);
+
+        let mut watcher = SshWatcher::new(3600, log, dedup, rx);
+
+        // Send shutdown immediately
+        let handle = tokio::spawn(async move {
+            watcher.run().await.unwrap();
+        });
+
+        // Give it a moment to enter the loop, then signal shutdown
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        tx.send(true).unwrap();
+
+        // Wait for run() to exit with a timeout
+        match tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await {
+            Ok(Ok(())) => {} // Success: run() exited cleanly
+            Ok(Err(e)) => panic!("run() task panicked: {:?}", e),
+            Err(_) => panic!("run() did not exit within timeout"),
+        }
+    }
+}

@@ -231,3 +231,109 @@ pub fn stop_monitor_process() -> anyhow::Result<()> {
 pub fn is_monitor_running() -> bool {
     pid::PidFile::new().running_pid().is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn test_config(dir: &TempDir) -> config::Config {
+        let mut cfg = config::Config::default();
+        cfg.log_dir = dir.path().to_path_buf();
+        cfg
+    }
+
+    #[test]
+    fn monitor_new_populates_fields() {
+        let dir = TempDir::new().unwrap();
+        let cfg = test_config(&dir);
+        let monitor = Monitor::new(cfg.clone());
+
+        assert_eq!(monitor.config.http_proxy_port, cfg.http_proxy_port);
+        assert!(monitor.ca.is_none());
+        assert!(monitor.pid_file.is_none());
+        assert!(monitor.shutdown_tx.is_none());
+        assert!(monitor.handles.is_empty());
+    }
+
+    #[test]
+    fn monitor_status_does_not_panic() {
+        let dir = TempDir::new().unwrap();
+        let cfg = test_config(&dir);
+        let monitor = Monitor::new(cfg);
+
+        let status = monitor.status();
+        // status() returns a valid struct — running state depends on
+        // whether there's an active monitor process (PID file)
+        let _ = status.running;
+        let _ = status.pid;
+        let _ = status.total_threats;
+    }
+
+    #[test]
+    fn monitor_read_threats_handles_file_operations() {
+        // read_threats uses config::default_log_dir()/threats.jsonl
+        let threats_path = config::default_log_dir().join("threats.jsonl");
+
+        // Start clean
+        let _ = std::fs::remove_file(&threats_path);
+
+        let monitor = Monitor::new(config::Config::default());
+
+        // Empty when file doesn't exist
+        assert!(monitor.read_threats(10).is_empty());
+
+        // Returns entries when file exists
+        let t1 = serde_json::json!({"type": "test_threat"});
+        let t2 = serde_json::json!({"type": "another_threat"});
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&t1).unwrap(),
+            serde_json::to_string(&t2).unwrap()
+        );
+        std::fs::create_dir_all(config::default_log_dir()).unwrap();
+        std::fs::write(&threats_path, &content).unwrap();
+
+        let threats = monitor.read_threats(10);
+        assert_eq!(threats.len(), 2);
+
+        // Test limit
+        let limited = monitor.read_threats(1);
+        assert_eq!(limited.len(), 1);
+
+        // Clean up
+        let _ = std::fs::remove_file(&threats_path);
+    }
+
+    #[test]
+    fn is_monitor_running_returns_false_when_no_pid_file() {
+        // When no PID file exists at /tmp/clawsec/monitor.pid, should return false
+        // unless there's actually a running monitor (which there shouldn't be in CI)
+        let running = is_monitor_running();
+        // Can't assert false in case a monitor IS running, but in test env it shouldn't be
+        // Just verify the function returns a bool without panicking
+        let _ = running;
+    }
+
+    #[test]
+    fn status_struct_serializes_correctly() {
+        let status = Status {
+            running: true,
+            pid: Some(12345),
+            total_threats: 7,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"running\":true"));
+        assert!(json.contains("\"pid\":12345"));
+        assert!(json.contains("\"total_threats\":7"));
+    }
+
+    // setup_logging sets a global subscriber — can only be called once per process.
+    // Tested implicitly via integration tests. Unit testing it would conflict
+    // with parallel test execution.
+
+    // Monitor::init() writes to the global PID file (/tmp/clawsec/monitor.pid).
+    // Because Rust runs tests in parallel, only one test in the entire suite
+    // can safely call init(). The init behavior is verified indirectly through
+    // the Tauri integration commands and CLI tests.
+}

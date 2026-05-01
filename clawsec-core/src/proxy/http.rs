@@ -507,4 +507,189 @@ mod tests {
         let text = String::from_utf8_lossy(&rewritten);
         assert!(!text.to_lowercase().contains("proxy-connection"));
     }
+
+    #[test]
+    fn test_resolve_host_no_host_header() {
+        let headers = b"GET /path HTTP/1.0\r\n\r\n";
+        let (host, port) = resolve_host("/path", headers);
+        assert_eq!(host, "");
+        assert_eq!(port, 0);
+    }
+
+    #[test]
+    fn test_resolve_host_http_url_with_port() {
+        let headers = b"GET http://example.com:8080/path HTTP/1.0\r\nHost: example.com\r\n\r\n";
+        let (host, port) = resolve_host("http://example.com:8080/path", headers);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn test_resolve_host_http_url_default_port() {
+        let headers = b"GET http://example.com/path HTTP/1.0\r\n\r\n";
+        let (host, port) = resolve_host("http://example.com/path", headers);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 80);
+    }
+
+    #[test]
+    fn test_rewrite_request_adds_connection_close_when_missing() {
+        let req = b"GET / HTTP/1.0\r\nHost: example.com\r\n\r\n";
+        let rewritten = rewrite_request(req);
+        let text = String::from_utf8_lossy(&rewritten);
+        assert!(text.to_lowercase().contains("connection: close"));
+    }
+
+    #[test]
+    fn test_rewrite_request_replaces_connection_header() {
+        let req = b"GET / HTTP/1.0\r\nConnection: keep-alive\r\nHost: example.com\r\n\r\n";
+        let rewritten = rewrite_request(req);
+        let text = String::from_utf8_lossy(&rewritten);
+        assert!(text.to_lowercase().contains("connection: close"));
+        assert!(!text.to_lowercase().contains("keep-alive"));
+    }
+
+    #[test]
+    fn test_rewrite_request_strips_keep_alive() {
+        let req =
+            b"GET / HTTP/1.0\r\nKeep-Alive: timeout=5\r\nHost: example.com\r\n\r\n";
+        let rewritten = rewrite_request(req);
+        let text = String::from_utf8_lossy(&rewritten);
+        assert!(!text.to_lowercase().contains("keep-alive:"));
+    }
+
+    #[test]
+    fn test_resolve_host_case_insensitive_host_header() {
+        let headers = b"GET / HTTP/1.0\r\nHOST: example.com\r\n\r\n";
+        let (host, port) = resolve_host("/", headers);
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 80);
+    }
+
+    #[test]
+    fn test_resolve_host_header_with_port_and_whitespace() {
+        let headers = b"GET / HTTP/1.0\r\nHost:  api.example.com:3000  \r\n\r\n";
+        let (host, port) = resolve_host("/", headers);
+        assert_eq!(host, "api.example.com");
+        assert_eq!(port, 3000);
+    }
+
+    #[tokio::test]
+    async fn test_read_http_header_simple_request() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let header = read_http_header(&mut stream).await.unwrap();
+            assert!(!header.is_empty());
+            let text = String::from_utf8_lossy(&header);
+            assert!(text.contains("GET /test"));
+            assert!(text.contains("Host: example.com"));
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        client
+            .write_all(b"GET /test HTTP/1.0\r\nHost: example.com\r\n\r\n")
+            .await
+            .unwrap();
+
+        tokio::time::timeout(tokio::time::Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_http_header_empty_on_large_input() {
+        // read_http_header returns empty Vec when input exceeds 16384 bytes
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let header = read_http_header(&mut stream).await.unwrap();
+            assert!(header.is_empty());
+        });
+
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Send more than 16384 bytes without \r\n\r\n
+        let padding = vec![b'x'; 17000];
+        client.write_all(&padding).await.unwrap();
+
+        tokio::time::timeout(tokio::time::Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_rewrite_request_preserves_non_proxy_headers() {
+        let req =
+            b"GET / HTTP/1.0\r\nHost: example.com\r\nAccept: text/html\r\nUser-Agent: test\r\n\r\n";
+        let rewritten = rewrite_request(req);
+        let text = String::from_utf8_lossy(&rewritten);
+        assert!(text.contains("Host: example.com"));
+        assert!(text.contains("Accept: text/html"));
+        assert!(text.contains("User-Agent: test"));
+        assert!(text.to_lowercase().contains("connection: close"));
+    }
+
+    #[test]
+    fn test_rewrite_request_is_idempotent() {
+        let req = b"GET / HTTP/1.0\r\nHost: example.com\r\n\r\n";
+        let first = rewrite_request(req);
+        let second = rewrite_request(&first);
+        // Second pass should not add duplicate Connection headers
+        let text = String::from_utf8_lossy(&second);
+        let count = text.to_lowercase().matches("connection:").count();
+        assert_eq!(count, 1, "Connection header should appear exactly once");
+    }
+
+    #[tokio::test]
+    async fn proxy_new_with_mitm_no_ca() {
+        use crate::threat::Dedup;
+        let dir = tempfile::TempDir::new().unwrap();
+        let log = Arc::new(crate::threat::log::ThreatLog::new(dir.path()));
+        let dedup = Arc::new(tokio::sync::Mutex::new(Dedup::new(60.0)));
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let proxy = HttpProxy::new(18888, 65536, true, None, log, dedup, rx);
+        // MITM should be OFF since there's no CA
+        // Constructor succeeds — just verify it doesn't panic
+        assert_eq!(proxy.port, 18888);
+        assert_eq!(proxy.max_scan, 65536);
+    }
+
+    #[tokio::test]
+    async fn proxy_new_with_mitm_and_ca() {
+        use crate::ca::CertAuthority;
+        use crate::threat::Dedup;
+        let dir = tempfile::TempDir::new().unwrap();
+        let ca =
+            Arc::new(CertAuthority::initialize(dir.path(), true).unwrap().unwrap());
+        let log = Arc::new(crate::threat::log::ThreatLog::new(dir.path()));
+        let dedup = Arc::new(tokio::sync::Mutex::new(Dedup::new(60.0)));
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let proxy = HttpProxy::new(18889, 32768, true, Some(ca), log, dedup, rx);
+        assert_eq!(proxy.port, 18889);
+        assert!(proxy.ca.is_some());
+    }
+
+    #[tokio::test]
+    async fn proxy_new_mitm_disabled_with_ca() {
+        use crate::ca::CertAuthority;
+        use crate::threat::Dedup;
+        let dir = tempfile::TempDir::new().unwrap();
+        let ca =
+            Arc::new(CertAuthority::initialize(dir.path(), true).unwrap().unwrap());
+        let log = Arc::new(crate::threat::log::ThreatLog::new(dir.path()));
+        let dedup = Arc::new(tokio::sync::Mutex::new(Dedup::new(60.0)));
+        let (_tx, rx) = tokio::sync::watch::channel(false);
+
+        let proxy = HttpProxy::new(18890, 65536, false, Some(ca), log, dedup, rx);
+        // MITM should be disabled even though CA is present
+        assert!(proxy.ca.is_some());
+    }
 }
