@@ -93,7 +93,8 @@ impl SshWatcher {
                 let local = parts[parts.len() - 3];
                 let remote = parts[parts.len() - 2];
                 // Only capture outbound SSH connections (local → remote:22)
-                if remote.contains(".22") {
+                if remote.ends_with(".22") {
+                    tracing::info!(remote = %remote, local = %local, "Detected SSH connection");
                     conns.insert(format!("{} -> {}", local, remote));
                 }
             }

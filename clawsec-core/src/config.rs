@@ -7,7 +7,7 @@ pub fn default_log_dir() -> PathBuf {
     PathBuf::from("/tmp/clawsec")
 }
 
-pub const DEFAULT_HTTP_PROXY_PORT: u16 = 8888;
+pub const DEFAULT_HTTP_PROXY_PORT: u16 = 10808;
 pub const DEFAULT_GATEWAY_LOCAL_PORT: u16 = 18790;
 pub const DEFAULT_GATEWAY_TARGET_PORT: u16 = 18789;
 pub const DEFAULT_MAX_SCAN_BYTES: usize = 65536;
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn config_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.http_proxy_port, 8888);
+        assert_eq!(cfg.http_proxy_port, 10808);
         assert_eq!(cfg.max_scan_bytes, 65536);
         assert_eq!(cfg.dedup_window_secs, 60.0);
         assert!(cfg.enable_http_proxy);
@@ -111,13 +111,13 @@ mod tests {
     #[test]
     fn config_load_missing_file_falls_back() {
         let cfg = Config::load(Some(Path::new("/nonexistent/config.json")));
-        assert_eq!(cfg.http_proxy_port, 8888);
+        assert_eq!(cfg.http_proxy_port, 10808);
         assert!(cfg.enable_http_proxy);
     }
 
     #[test]
     fn config_load_none() {
         let cfg = Config::load(None);
-        assert_eq!(cfg.http_proxy_port, 8888);
+        assert_eq!(cfg.http_proxy_port, 10808);
     }
 }

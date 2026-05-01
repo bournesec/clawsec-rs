@@ -23,7 +23,7 @@
   let saved = $state(false);
   let configPath = $state("");
 
-  let httpProxyPort = $state(8888);
+  let httpProxyPort = $state(10808);
   let logLevel = $state("INFO");
   let maxScanBytes = $state(65536);
   let sshPollInterval = $state(10);
@@ -82,7 +82,7 @@
   async function handleReset() {
     try {
       const defaults: ConfigData = {
-        http_proxy_port: 8888,
+        http_proxy_port: 10808,
         gateway_local_port: 18790,
         gateway_target_port: 18789,
         log_dir: "/tmp/clawsec",
